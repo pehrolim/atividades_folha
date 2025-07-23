@@ -28,6 +28,9 @@ class AcoMilitarGUI(ctk.CTkFrame):
 
         self.var_gerar_analise = ctk.BooleanVar(value=True)
 
+        # --- ALTERAÇÃO AQUI ---
+        # Adicionado para que a própria view se posicione e ocupe o espaço.
+        self.pack(fill="both", expand=True, padx=10, pady=10)
         self._criar_interface()
 
     def _criar_interface(self):

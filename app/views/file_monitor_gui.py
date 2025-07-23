@@ -11,17 +11,18 @@ from app.logic.data_manager import DataManager
 from app.logic.file_monitor import FileMonitor
 from app.widgets.custom_button import StandardButton
 from app.widgets.custom_labels import TitleLabel, InfoLabel, ValueLabel
-from app.widgets.custom_frames import StandardFrame, TransparentFrame # <-- Importa os novos frames
+from app.widgets.custom_frames import StandardFrame, TransparentFrame
 
 class FileMonitorGUI(ctk.CTkFrame):
     """
     View para o monitoramento de arquivos, construída com CustomTkinter
     e utilizando componentes padronizados.
     """
+
     def __init__(self, master=None):
         super().__init__(master, fg_color="transparent")
 
-        # A lógica de negócio permanece a mesma.
+        # --- Lógica de negócio (permanece a mesma) ---
         self.pasta_origem_monitoramento = os.path.expanduser("~/Downloads")
         self.pasta_destino_processados = os.path.abspath(
             os.path.join(os.path.dirname(__file__), '../../data/processados'))
@@ -34,6 +35,10 @@ class FileMonitorGUI(ctk.CTkFrame):
             arquivo_processado_callback=self._atualizar_info_dados
         )
 
+        # --- Configuração do Layout e Inicialização ---
+        # --- ALTERAÇÃO AQUI ---
+        # Adicionado para que a própria view se posicione.
+        self.pack(fill="both", expand=True, padx=10, pady=10)
         self._criar_interface()
         self._atualizar_info_dados()
 
@@ -97,23 +102,18 @@ class FileMonitorGUI(ctk.CTkFrame):
             self.lbl_pasta_destino.configure(text=pasta)
             self._log_mensagem(f"Pasta de destino selecionada: {pasta}")
 
+    # --- MÉTODO ATUALIZADO ---
     def _alternar_monitoramento(self):
         if self.file_monitor.obter_status_monitoramento():
             if self.file_monitor.parar_monitoramento():
                 # Restaura a aparência do botão para "Iniciar" (estilo 'success')
-                self.btn_alternar_monitoramento.configure(
-                    text="▶ Iniciar Monitoramento",
-                    fg_color="#2ecc71",
-                    hover_color="#27ae60"
-                )
+                self.btn_alternar_monitoramento.configure(text="▶ Iniciar Monitoramento")
+                self.btn_alternar_monitoramento.configure_variant("success")
         else:
             if self.file_monitor.iniciar_monitoramento(self.pasta_origem_monitoramento, self.pasta_destino_processados):
                 # Altera a aparência do botão para "Parar" (estilo 'danger')
-                self.btn_alternar_monitoramento.configure(
-                    text="⏹ Parar Monitoramento",
-                    fg_color="#e74c3c",
-                    hover_color="#c0392b"
-                )
+                self.btn_alternar_monitoramento.configure(text="⏹ Parar Monitoramento")
+                self.btn_alternar_monitoramento.configure_variant("danger")
 
     def _salvar_csv(self):
         if self.data_manager.esta_vazio(): messagebox.showwarning("Aviso", "Não há dados para salvar."); return
