@@ -8,7 +8,8 @@ from app.views.analise_folha_gui import AnaliseView
 from app.views.calc_aco_gui import CalcAcoGUI
 from app.views.junta_arquivos_gui import JuntaArquivosGUI
 from app.views.honorarios_gui import HonorariosGUI
-from app.views.home_gui import HomeGUI  # <-- NOVO IMPORT
+from app.views.home_gui import HomeGUI
+from app.views.aco_demais_cat_gui import AcoDemaisCatGUI
 
 
 class MainLogic:
@@ -21,37 +22,48 @@ class MainLogic:
         self.current_frame = None
 
     def _clear_main_frame(self):
-        """Limpa todos os widgets do frame principal."""
-        if self.current_frame:
-            self.current_frame.destroy()
+        """Destrói todos os widgets filhos do frame principal."""
+        for widget in self.view.main_frame.winfo_children():
+            widget.destroy()
         self.current_frame = None
 
-    # --- ALTERAÇÃO AQUI ---
-    def show_home(self):
-        """Exibe a tela inicial instanciando sua própria classe."""
+    # --- MECANISMO DE CORREÇÃO ---
+    def _show_frame(self, frame_class):
+        """
+        Limpa o frame principal e exibe uma nova tela após um pequeno delay
+        para garantir que a destruição da tela anterior seja concluída.
+        """
         self._clear_main_frame()
-        self.current_frame = HomeGUI(master=self.view.main_frame)
+        # O uso de 'after(5, ...)' agenda a criação do novo frame para 5ms no futuro.
+        # Isso permite que o loop de eventos do Tkinter processe a destruição
+        # dos widgets antigos antes de criar os novos, evitando o conflito.
+        self.view.main_frame.after(5, lambda: self._create_frame(frame_class))
+
+    def _create_frame(self, frame_class):
+        """Cria a instância do novo frame."""
+        self.current_frame = frame_class(master=self.view.main_frame)
+
+    # --- Métodos de navegação agora usam o mecanismo de correção ---
+    def show_home(self):
+        self._show_frame(HomeGUI)
 
     def show_monitor(self):
-        self._clear_main_frame()
-        self.current_frame = FileMonitorGUI(master=self.view.main_frame)
+        self._show_frame(FileMonitorGUI)
 
     def show_aco_militar(self):
-        self._clear_main_frame()
-        self.current_frame = AcoMilitarGUI(master=self.view.main_frame)
+        self._show_frame(AcoMilitarGUI)
 
     def show_analise_folha(self):
-        self._clear_main_frame()
-        self.current_frame = AnaliseView(master=self.view.main_frame)
+        self._show_frame(AnaliseView)
 
     def show_calc_aco(self):
-        self._clear_main_frame()
-        self.current_frame = CalcAcoGUI(master=self.view.main_frame)
+        self._show_frame(CalcAcoGUI)
 
     def show_junta_arquivos(self):
-        self._clear_main_frame()
-        self.current_frame = JuntaArquivosGUI(master=self.view.main_frame)
+        self._show_frame(JuntaArquivosGUI)
 
     def show_honorarios(self):
-        self._clear_main_frame()
-        self.current_frame = HonorariosGUI(master=self.view.main_frame)
+        self._show_frame(HonorariosGUI)
+    
+    def show_demais_cat(self):
+        self._show_frame(AcoDemaisCatGUI)

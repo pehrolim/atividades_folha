@@ -1,20 +1,21 @@
 # app/views/home_gui.py
-import customtkinter as ctk
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel
+from PySide6.QtGui import QFont
+from PySide6.QtCore import Qt
 
-
-class HomeGUI(ctk.CTkFrame):
+class HomeGUI(QWidget):
     """
     View para a tela inicial (Home) da aplicação.
     """
+    def __init__(self):
+        super().__init__()
+        
+        layout = QVBoxLayout(self)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-    def __init__(self, master=None):
-        super().__init__(master, fg_color="transparent")
-
-        # A própria view se posiciona no master
-        self.pack(fill="both", expand=True)
-
-        # Adiciona o label de boas-vindas
-        label_boas_vindas = ctk.CTkLabel(self,
-                                         text="Seja Bem-vindo à Aplicação!",
-                                         font=("Roboto", 24))
-        label_boas_vindas.pack(pady=40, padx=20)
+        label_boas_vindas = QLabel("Seja Bem-vindo à Aplicação!")
+        font = QFont("Roboto", 24)
+        font.setBold(True)
+        label_boas_vindas.setFont(font)
+        
+        layout.addWidget(label_boas_vindas)

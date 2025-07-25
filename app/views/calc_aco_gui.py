@@ -1,16 +1,22 @@
-import customtkinter as ctk
-from tkinter import ttk, messagebox, filedialog
-import pandas as pd
+# app/views/calc_aco_gui.py
+import os
+import datetime
 import threading
-from app.logic.calc_aco_processor import CalcAcoProcessor
-from app.widgets.custom_button import StandardButton
-from app.widgets.custom_frames import StandardFrame, TransparentFrame
-from app.widgets.custom_labels import TitleLabel, InfoLabel, ValueLabel
+import pandas as pd
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QFrame, QLabel, 
+                               QLineEdit, QTableWidget, QTableWidgetItem, QHeaderView, QFileDialog, QMessageBox)
+from PySide6.QtCore import Slot, Signal, QObject
+from PySide6.QtGui import QFont
 
-class CalcAcoGUI(ctk.CTkFrame):
+from app.logic.calc_aco_processor import CalcAcoProcessor
+from app.widgets.styled_widgets import StyledButton
+
+class WorkerSignals(QObject):
+    import_finished = Signal(dict)
+
+class CalcAcoGUI(QWidget):
     def __init__(self, master=None):
-        super().__init__(master, fg_color="transparent")
-        self.pack(fill="both", expand=True)
+        super().__init__(master)
 
         self.processor = CalcAcoProcessor()
         self.colunas_tabela = ['Matrícula', 'CLF', 'Código', 'Referencia (Horas)', 'H. Normal',
@@ -18,248 +24,248 @@ class CalcAcoGUI(ctk.CTkFrame):
         self.dados_para_exibicao = []
         self.valores_calculados = None
 
-        self.var_tarifa_normal = ctk.StringVar(value="R$ 0,00")
-        self.var_tarifa_majorada = ctk.StringVar(value="R$ 0,00")
-        self.var_status_busca = ctk.StringVar(value="Aguardando CLF...")
-        self.var_hn = ctk.StringVar(value="0.0")
-        self.var_hm = ctk.StringVar(value="0.0")
-        self.var_vt = ctk.StringVar(value="R$ 0,00")
+        self.signals = WorkerSignals()
+        self.signals.import_finished.connect(self._finalizar_importacao)
 
         self._criar_interface()
 
     def _criar_interface(self):
-        main_grid = TransparentFrame(self)
-        main_grid.pack(fill="both", expand=True, padx=10, pady=10)
-        main_grid.grid_columnconfigure(0, weight=1)
-        main_grid.grid_columnconfigure(1, weight=1)
-        main_grid.grid_rowconfigure(1, weight=1)
+        main_layout = QHBoxLayout(self)
 
-        frame_esquerdo = TransparentFrame(main_grid)
-        frame_esquerdo.grid(row=0, column=0, rowspan=2, padx=(0, 10), sticky="nsew")
-        frame_esquerdo.grid_rowconfigure(1, weight=1)
-        frame_esquerdo.grid_columnconfigure(0, weight=1)
+        # --- Frame Esquerdo (Entradas e Tabela) ---
+        frame_esquerdo = QFrame()
+        layout_esquerdo = QVBoxLayout(frame_esquerdo)
+        
+        frame_entradas = QFrame()
+        frame_entradas.setObjectName("container")
+        frame_entradas.setStyleSheet("#container { border: 1px solid #dcdcdc; border-radius: 5px; padding: 10px; }")
+        layout_entradas = QGridLayout(frame_entradas)
+        
+        self.entry_matricula = QLineEdit()
+        self.entry_clf = QLineEdit()
+        self.entry_codigo = QLineEdit()
+        self.entry_referencia = QLineEdit()
+        self.entry_observacao = QLineEdit()
 
-        frame_direito = TransparentFrame(main_grid)
-        frame_direito.grid(row=0, column=1, sticky="new")
-        frame_direito.grid_columnconfigure(0, weight=1)
+        layout_entradas.addWidget(QLabel("<b>1. Preencha os Dados</b>"), 0, 0, 1, 2)
+        layout_entradas.addWidget(QLabel("Matrícula:"), 1, 0)
+        layout_entradas.addWidget(self.entry_matricula, 1, 1)
+        layout_entradas.addWidget(QLabel("CLF:"), 2, 0)
+        layout_entradas.addWidget(self.entry_clf, 2, 1)
+        layout_entradas.addWidget(QLabel("Código:"), 3, 0)
+        layout_entradas.addWidget(self.entry_codigo, 3, 1)
+        layout_entradas.addWidget(QLabel("Referencia (Horas):"), 4, 0)
+        layout_entradas.addWidget(self.entry_referencia, 4, 1)
+        layout_entradas.addWidget(QLabel("Observação:"), 5, 0)
+        layout_entradas.addWidget(self.entry_observacao, 5, 1)
+        layout_entradas.setColumnStretch(1, 1)
 
-        frame_entradas = StandardFrame(frame_esquerdo)
-        frame_entradas.grid(row=0, column=0, sticky="ew")
-        TitleLabel(frame_entradas, text="1. Preencha os Dados").pack(pady=(10, 15), padx=20)
+        self.table = QTableWidget()
+        self.table.setColumnCount(len(self.colunas_tabela))
+        self.table.setHorizontalHeaderLabels(self.colunas_tabela)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        
+        acoes_layout = QHBoxLayout()
+        btn_importar = StyledButton("Importar", "primary")
+        btn_exportar = StyledButton("Exportar", "primary")
+        btn_limpar = StyledButton("Limpar", "danger")
+        acoes_layout.addWidget(btn_importar)
+        acoes_layout.addWidget(btn_exportar)
+        acoes_layout.addWidget(btn_limpar)
+        acoes_layout.addStretch()
 
-        grid_entradas = TransparentFrame(frame_entradas)
-        grid_entradas.pack(fill='x', padx=10, pady=5)
-        grid_entradas.grid_columnconfigure((1, 3), weight=1)
+        layout_esquerdo.addWidget(frame_entradas)
+        layout_esquerdo.addWidget(self.table, 1)
+        layout_esquerdo.addLayout(acoes_layout)
 
-        InfoLabel(grid_entradas, text="Matrícula:").grid(row=0, column=0, padx=5, pady=5, sticky='w')
-        self.entry_matricula = ctk.CTkEntry(grid_entradas)
-        self.entry_matricula.grid(row=0, column=1, columnspan=3, padx=5, pady=5, sticky='ew')
-        self.entry_matricula.bind("<Return>", self._adicionar_item_event) # Atalho Enter
+        # --- Frame Direito (Cálculo) ---
+        frame_direito = QFrame()
+        layout_direito = QVBoxLayout(frame_direito)
 
-        InfoLabel(grid_entradas, text="CLF:").grid(row=1, column=0, padx=5, pady=5, sticky='w')
-        self.entry_clf = ctk.CTkEntry(grid_entradas)
-        self.entry_clf.grid(row=1, column=1, padx=5, pady=5, sticky='ew')
-        self.entry_clf.bind("<FocusOut>", self._buscar_tarifas_e_calcular)
-        self.entry_clf.bind("<Return>", self._adicionar_item_event) # Atalho Enter
+        frame_calc = QFrame()
+        frame_calc.setObjectName("container")
+        frame_calc.setStyleSheet("#container { border: 1px solid #dcdcdc; border-radius: 5px; padding: 10px; }")
+        layout_calc = QVBoxLayout(frame_calc)
+        
+        bold_font = QFont(); bold_font.setBold(True)
+        valor_font = QFont(); valor_font.setBold(True); valor_font.setPointSize(16)
+        total_font = QFont(); total_font.setBold(True); total_font.setPointSize(28)
+        
+        self.lbl_status_busca = QLabel("Aguardando CLF...")
+        self.lbl_tarifa_normal = QLabel("R$ 0,00"); self.lbl_tarifa_normal.setFont(valor_font)
+        self.lbl_tarifa_majorada = QLabel("R$ 0,00"); self.lbl_tarifa_majorada.setFont(valor_font)
+        self.lbl_hn = QLabel("0.0"); self.lbl_hn.setFont(valor_font)
+        self.lbl_hm = QLabel("0.0"); self.lbl_hm.setFont(valor_font)
+        self.lbl_vt = QLabel("R$ 0,00"); self.lbl_vt.setFont(total_font); self.lbl_vt.setStyleSheet("color: #2ECC71;")
+        
+        layout_calc.addWidget(QLabel("<b>2. Demonstrativo do Cálculo</b>"))
+        layout_calc.addWidget(self.lbl_status_busca)
+        layout_calc.addSpacing(10)
+        layout_calc.addWidget(QLabel("Tarifa Normal:"))
+        layout_calc.addWidget(self.lbl_tarifa_normal)
+        layout_calc.addSpacing(10)
+        layout_calc.addWidget(QLabel("Tarifa Majorada:"))
+        layout_calc.addWidget(self.lbl_tarifa_majorada)
+        layout_calc.addSpacing(10)
+        layout_calc.addWidget(QLabel("Horas Normais:"))
+        layout_calc.addWidget(self.lbl_hn)
+        layout_calc.addSpacing(10)
+        layout_calc.addWidget(QLabel("Horas Majoradas:"))
+        layout_calc.addWidget(self.lbl_hm)
+        layout_calc.addSpacing(15)
+        layout_calc.addWidget(QLabel("<b>VALOR TOTAL CALCULADO</b>"))
+        layout_calc.addWidget(self.lbl_vt)
+        
+        btn_adicionar = StyledButton("⬇️ Adicionar à Tabela", "success")
+        
+        layout_direito.addWidget(frame_calc)
+        layout_direito.addWidget(btn_adicionar)
+        layout_direito.addStretch()
 
-        InfoLabel(grid_entradas, text="Código:").grid(row=1, column=2, padx=5, pady=5, sticky='w')
-        self.entry_codigo = ctk.CTkEntry(grid_entradas)
-        self.entry_codigo.grid(row=1, column=3, padx=5, pady=5, sticky='ew')
-        self.entry_codigo.bind("<FocusOut>", self._buscar_tarifas_e_calcular)
-        self.entry_codigo.bind("<Return>", self._adicionar_item_event) # Atalho Enter
+        main_layout.addWidget(frame_esquerdo, 2) # 2/3 do espaço
+        main_layout.addWidget(frame_direito, 1) # 1/3 do espaço
 
-        InfoLabel(grid_entradas, text="Referencia (Horas):").grid(row=2, column=0, padx=5, pady=5, sticky='w')
-        self.entry_referencia = ctk.CTkEntry(grid_entradas)
-        self.entry_referencia.grid(row=2, column=1, columnspan=3, padx=5, pady=5, sticky='ew')
-        self.entry_referencia.bind("<FocusOut>", self._calcular_valores)
-        self.entry_referencia.bind("<Return>", self._adicionar_item_event) # Atalho Enter
+        # --- Conexões ---
+        self.entry_clf.editingFinished.connect(self._buscar_tarifas_e_calcular)
+        self.entry_codigo.editingFinished.connect(self._buscar_tarifas_e_calcular)
+        self.entry_referencia.editingFinished.connect(self._calcular_valores)
+        btn_adicionar.clicked.connect(self._adicionar_item)
+        btn_importar.clicked.connect(self._iniciar_importacao_threaded)
+        btn_exportar.clicked.connect(self._exportar_excel)
+        btn_limpar.clicked.connect(self._limpar_tabela)
 
-        InfoLabel(grid_entradas, text="Observação:").grid(row=3, column=0, padx=5, pady=5, sticky='w')
-        self.entry_observacao = ctk.CTkEntry(grid_entradas)
-        self.entry_observacao.grid(row=3, column=1, columnspan=3, padx=5, pady=5, sticky='we')
-        self.entry_observacao.bind("<Return>", self._adicionar_item_event) # Atalho Enter
-        self.entry_observacao.pack_propagate(False)
+    def _limpar_resultados(self):
+        self.valores_calculados = None
+        self.lbl_tarifa_normal.setText("R$ 0,00")
+        self.lbl_tarifa_majorada.setText("R$ 0,00")
+        self.lbl_status_busca.setText("Aguardando CLF...")
+        self.lbl_hn.setText("0.0")
+        self.lbl_hm.setText("0.0")
+        self.lbl_vt.setText("R$ 0,00")
 
-        frame_calc = StandardFrame(frame_direito, fg_color=("#EAEAEA", "#2B2B2B"))
-        frame_calc.grid(row=0, column=0, sticky="ew")
-        TitleLabel(frame_calc, text="2. Demonstrativo do Cálculo").pack(pady=(10, 5), padx=20)
-        ValueLabel(frame_calc, textvariable=self.var_status_busca, text_color="gray", font=("Roboto", 10, "italic")).pack(pady=(0, 10))
-
-        frame_tarifas = TransparentFrame(frame_calc)
-        frame_tarifas.pack(fill="x", padx=20, pady=5)
-        frame_tarifas.grid_columnconfigure((0,1), weight=1)
-        InfoLabel(frame_tarifas, text="Tarifa Normal").grid(row=0, column=0)
-        ValueLabel(frame_tarifas, textvariable=self.var_tarifa_normal, font=("Roboto", 16, "bold")).grid(row=1, column=0)
-        InfoLabel(frame_tarifas, text="Tarifa Majorada").grid(row=0, column=1)
-        ValueLabel(frame_tarifas, textvariable=self.var_tarifa_majorada, font=("Roboto", 16, "bold")).grid(row=1, column=1)
-
-        ctk.CTkFrame(frame_calc, height=1, fg_color="gray").pack(fill="x", padx=20, pady=10)
-
-        frame_horas = TransparentFrame(frame_calc)
-        frame_horas.pack(fill="x", padx=20, pady=5)
-        frame_horas.grid_columnconfigure((0,1), weight=1)
-        InfoLabel(frame_horas, text="Horas Normais").grid(row=0, column=0)
-        ValueLabel(frame_horas, textvariable=self.var_hn, font=("Roboto", 16, "bold")).grid(row=1, column=0)
-        InfoLabel(frame_horas, text="Horas Majoradas").grid(row=0, column=1)
-        ValueLabel(frame_horas, textvariable=self.var_hm, font=("Roboto", 16, "bold")).grid(row=1, column=1)
-
-        ctk.CTkFrame(frame_calc, height=2, fg_color="gray").pack(fill="x", padx=20, pady=10)
-
-        TitleLabel(frame_calc, text="VALOR TOTAL CALCULADO", font=("Roboto", 14, "bold")).pack()
-        ValueLabel(frame_calc, textvariable=self.var_vt, font=("Roboto", 32, "bold"), text_color="#2ECC71").pack(pady=(0, 20))
-
-        self.btn_adicionar = StandardButton(frame_direito, text="⬇️ Adicionar à Tabela", command=self._adicionar_item, variant="success")
-        self.btn_adicionar.grid(row=1, column=0, pady=10, sticky="ew")
-
-        frame_tabela_container = StandardFrame(frame_esquerdo)
-        frame_tabela_container.grid(row=1, column=0, pady=(10,0), sticky="nsew")
-        frame_tabela_container.grid_rowconfigure(0, weight=1)
-        frame_tabela_container.grid_columnconfigure(0, weight=1)
-
-        style = ttk.Style()
-        style.configure("Treeview", rowheight=25, font=("Roboto", 10))
-        style.configure("Treeview.Heading", font=("Roboto", 10, "bold"))
-        self.tree = ttk.Treeview(frame_tabela_container, columns=self.colunas_tabela, show='headings')
-        vsb = ctk.CTkScrollbar(frame_tabela_container, command=self.tree.yview)
-        vsb.grid(row=0, column=1, sticky="ns")
-        hsb = ctk.CTkScrollbar(frame_tabela_container, orientation="horizontal", command=self.tree.xview)
-        hsb.grid(row=1, column=0, columnspan=2, sticky="ew")
-        self.tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
-        self.tree.grid(row=0, column=0, padx=5, pady=5, sticky="nsew")
-        for col in self.colunas_tabela:
-            self.tree.heading(col, text=col)
-            self.tree.column(col, width=110, anchor='w')
-
-        frame_acoes = TransparentFrame(frame_esquerdo)
-        frame_acoes.grid(row=2, column=0, pady=10, sticky="ew")
-        self.btn_importar = StandardButton(frame_acoes, text="Importar", command=self._iniciar_importacao_threaded)
-        self.btn_importar.pack(side='left', padx=(0,5))
-        self.btn_exportar = StandardButton(frame_acoes, text="Exportar", command=self._exportar_excel)
-        self.btn_exportar.pack(side='left', padx=5)
-        self.btn_limpar = StandardButton(frame_acoes, text="Limpar", command=self._limpar_tabela, variant="danger")
-        self.btn_limpar.pack(side='left', padx=5)
-
-    def _adicionar_item_event(self, event=None):
-        """Wrapper para o evento de atalho, que chama a função principal."""
-        self._adicionar_item()
-
-    def _buscar_tarifas_e_calcular(self, event=None):
-        self._buscar_tarifas_por_clf()
-        if self.entry_referencia.get():
-            self._calcular_valores()
-
-    def _buscar_tarifas_por_clf(self, event=None):
+    @Slot()
+    def _buscar_tarifas_e_calcular(self):
         self._limpar_resultados()
-        clf = self.entry_clf.get()
-        codigo = self.entry_codigo.get()
+        clf = self.entry_clf.text()
+        codigo = self.entry_codigo.text()
         if not clf:
-            self.var_status_busca.set("Aguardando CLF...")
             return
 
         resultado = self.processor.buscar_tarifas(clf, codigo)
         if resultado['status'] == 'sucesso':
-            self.var_tarifa_normal.set(f"R$ {resultado['tarifa_normal']:.2f}")
-            self.var_tarifa_majorada.set(f"R$ {resultado['tarifa_majorada']:.2f}")
-            self.var_status_busca.set("Tarifas encontradas.")
+            self.lbl_tarifa_normal.setText(f"R$ {resultado['tarifa_normal']:.2f}")
+            self.lbl_tarifa_majorada.setText(f"R$ {resultado['tarifa_majorada']:.2f}")
+            self.lbl_status_busca.setText("Tarifas encontradas.")
+            # Se já houver referência, calcula os valores
+            if self.entry_referencia.text():
+                self._calcular_valores()
         else:
-            self.var_tarifa_normal.set("R$ 0,00")
-            self.var_tarifa_majorada.set("R$ 0,00")
-            self.var_status_busca.set(resultado['mensagem'])
+            self.lbl_status_busca.setText(f"<font color='red'>{resultado['mensagem']}</font>")
 
-    def _calcular_valores(self, event=None):
-        self.var_hn.set("0.0"); self.var_hm.set("0.0"); self.var_vt.set("R$ 0,00")
-        self.valores_calculados = None
-        clf = self.entry_clf.get(); codigo = self.entry_codigo.get()
-        referencia_horas = self.entry_referencia.get()
+    @Slot()
+    def _calcular_valores(self):
+        clf = self.entry_clf.text()
+        codigo = self.entry_codigo.text()
+        referencia_horas = self.entry_referencia.text()
 
         if not all([clf, referencia_horas]):
-            if referencia_horas: messagebox.showwarning("Dados Faltando", "Preencha o 'CLF'.")
+            if referencia_horas: QMessageBox.warning(self, "Dados Faltando", "Preencha o 'CLF'.")
             return
-
+        
         try:
             resultado = self.processor.calcular_tudo(clf, referencia_horas, codigo)
             if resultado['status'] == 'sucesso':
                 self.valores_calculados = resultado
-                self.var_hn.set(f"{resultado['h_normal']:.1f}")
-                self.var_hm.set(f"{resultado['h_majorada']:.1f}")
-                self.var_vt.set(f"R$ {resultado['valor_total']:.2f}")
-                self.var_tarifa_normal.set(f"R$ {resultado['tarifa_normal']:.2f}")
-                self.var_tarifa_majorada.set(f"R$ {resultado['tarifa_majorada']:.2f}")
-                self.var_status_busca.set("Cálculo realizado com sucesso!")
+                self.lbl_hn.setText(f"{resultado['h_normal']:.1f}")
+                self.lbl_hm.setText(f"{resultado['h_majorada']:.1f}")
+                self.lbl_vt.setText(f"R$ {resultado['valor_total']:.2f}")
+                self.lbl_tarifa_normal.setText(f"R$ {resultado['tarifa_normal']:.2f}")
+                self.lbl_tarifa_majorada.setText(f"R$ {resultado['tarifa_majorada']:.2f}")
+                self.lbl_status_busca.setText("<font color='green'>Cálculo realizado com sucesso!</font>")
             else:
-                messagebox.showerror("Erro no Cálculo", resultado['mensagem'])
-                self.var_status_busca.set(resultado['mensagem'])
+                QMessageBox.critical(self, "Erro no Cálculo", resultado['mensagem'])
+                self.lbl_status_busca.setText(f"<font color='red'>{resultado['mensagem']}</font>")
         except Exception as e:
-            messagebox.showerror("Erro Inesperado", str(e))
+            QMessageBox.critical(self, "Erro Inesperado", str(e))
 
+    @Slot()
     def _adicionar_item(self):
         if not self.valores_calculados:
-            messagebox.showwarning("Ação Inválida", "Preencha CLF e Referencia para calcular os valores antes de adicionar."); return
-        if not self.entry_matricula.get():
-            messagebox.showwarning("Matrícula Faltando", "Informe a Matrícula."); return
+            QMessageBox.warning(self, "Ação Inválida", "Calcule os valores antes de adicionar.")
+            return
+        if not self.entry_matricula.text():
+            QMessageBox.warning(self, "Matrícula Faltando", "Informe a Matrícula.")
+            return
 
         nova_linha = {
-            'Matrícula': self.entry_matricula.get(), 'CLF': self.entry_clf.get(),
-            'Código': self.entry_codigo.get(), 'Referencia (Horas)': self.entry_referencia.get(),
-            'H. Normal': self.valores_calculados['h_normal'], 'Tarifa Normal': self.valores_calculados['tarifa_normal'],
-            'H. Majorada': self.valores_calculados['h_majorada'], 'Tarifa Majorada': self.valores_calculados['tarifa_majorada'],
-            'Valor Total': self.valores_calculados['valor_total'], 'Observação': self.entry_observacao.get()
+            'Matrícula': self.entry_matricula.text(), 'CLF': self.entry_clf.text(),
+            'Código': self.entry_codigo.text(), 'Referencia (Horas)': self.entry_referencia.text(),
+            'H. Normal': self.valores_calculados['h_normal'], 
+            'Tarifa Normal': f"R$ {self.valores_calculados['tarifa_normal']:.2f}",
+            'H. Majorada': self.valores_calculados['h_majorada'], 
+            'Tarifa Majorada': f"R$ {self.valores_calculados['tarifa_majorada']:.2f}",
+            'Valor Total': f"R$ {self.valores_calculados['valor_total']:.2f}", 
+            'Observação': self.entry_observacao.text()
         }
         self.dados_para_exibicao.append(nova_linha)
         self._atualizar_tabela()
         self._limpar_campos_de_entrada()
 
-    def _atualizar_tabela(self):
-        for i in self.tree.get_children(): self.tree.delete(i)
-        for item in self.dados_para_exibicao:
-            tn_f = f"R$ {item['Tarifa Normal']:.2f}"; tm_f = f"R$ {item['Tarifa Majorada']:.2f}"; vt_f = f"R$ {item['Valor Total']:.2f}"
-            valores = [item['Matrícula'], item['CLF'], item['Código'], item['Referencia (Horas)'],
-                       item['H. Normal'], tn_f, item['H. Majorada'], tm_f, vt_f, item['Observação']]
-            self.tree.insert("", "end", values=valores)
-
-    def _limpar_resultados(self):
-        self.valores_calculados = None
-        self.var_tarifa_normal.set("R$ 0,00"); self.var_tarifa_majorada.set("R$ 0,00")
-        self.var_status_busca.set("Aguardando CLF...")
-        self.var_hn.set("0.0"); self.var_hm.set("0.0"); self.var_vt.set("R$ 0,00")
-
     def _limpar_campos_de_entrada(self):
-        self.entry_matricula.delete(0, 'end'); self.entry_clf.delete(0, 'end')
-        self.entry_codigo.delete(0, 'end'); self.entry_referencia.delete(0, 'end')
-        self.entry_observacao.delete(0, 'end'); self._limpar_resultados()
-        self.entry_matricula.focus()
-
-    def _limpar_tabela(self):
-        if self.dados_para_exibicao and messagebox.askyesno("Confirmar", "Limpar a tabela?"):
-            self.dados_para_exibicao.clear(); self._atualizar_tabela()
-
+        self.entry_matricula.clear()
+        self.entry_clf.clear()
+        self.entry_codigo.clear()
+        self.entry_referencia.clear()
+        self.entry_observacao.clear()
+        self._limpar_resultados()
+        self.entry_matricula.setFocus()
+    
+    @Slot()
     def _iniciar_importacao_threaded(self):
-        caminho_arquivo = filedialog.askopenfilename(filetypes=[("Arquivos Excel", "*.xlsx")])
-        if not caminho_arquivo: return
-        if self.dados_para_exibicao and messagebox.askyesno("Confirmar", "Limpar dados antes de importar?"):
-            self.dados_para_exibicao.clear(); self._atualizar_tabela()
-        threading.Thread(target=self._executar_importacao, args=(caminho_arquivo,), daemon=True).start()
+        caminho, _ = QFileDialog.getOpenFileName(self, "Importar Arquivo", "", "Arquivos Excel (*.xlsx)")
+        if not caminho: return
+        threading.Thread(target=self._executar_importacao, args=(caminho,), daemon=True).start()
 
     def _executar_importacao(self, caminho_arquivo):
-        resultado = self.processor.processar_arquivo_importado(caminho_arquivo);
-        self.after(0, self._finalizar_importacao, resultado)
+        resultado = self.processor.processar_arquivo_importado(caminho_arquivo)
+        self.signals.import_finished.emit(resultado)
 
+    @Slot(dict)
     def _finalizar_importacao(self, resultado):
         if resultado['status'] == 'sucesso':
-            self.dados_para_exibicao.extend(resultado['dados']); self._atualizar_tabela()
+            self.dados_para_exibicao.extend(resultado['dados'])
+            self._atualizar_tabela()
             sucesso_msg = f"{len(resultado['dados'])} linhas importadas."
             if resultado['erros']:
                 erros_msg = "\n\nOcorreram erros:\n" + "\n".join(resultado['erros'])
-                messagebox.showwarning("Importação Parcial", sucesso_msg + erros_msg)
+                QMessageBox.warning(self, "Importação Parcial", sucesso_msg + erros_msg)
             else:
-                messagebox.showinfo("Importação Concluída", sucesso_msg)
+                QMessageBox.information(self, "Importação Concluída", sucesso_msg)
         else:
-            messagebox.showerror("Erro na Importação", resultado['mensagem'])
+            QMessageBox.critical(self, "Erro na Importação", resultado['mensagem'])
+        
+    def _atualizar_tabela(self):
+        self.table.setRowCount(len(self.dados_para_exibicao))
+        for i, item in enumerate(self.dados_para_exibicao):
+            for j, col_name in enumerate(self.colunas_tabela):
+                self.table.setItem(i, j, QTableWidgetItem(str(item.get(col_name, ""))))
 
+    @Slot()
     def _exportar_excel(self):
-        if not self.dados_para_exibicao: messagebox.showwarning("Aviso", "Não há dados para exportar."); return
-        caminho = filedialog.asksaveasfilename(defaultextension=".xlsx", filetypes=[("Arquivos Excel", "*.xlsx")])
+        if not self.dados_para_exibicao:
+            QMessageBox.warning(self, "Aviso", "Não há dados para exportar.")
+            return
+        caminho, _ = QFileDialog.getSaveFileName(self, "Exportar para Excel", "", "Arquivos Excel (*.xlsx)")
         if caminho:
             df = pd.DataFrame(self.dados_para_exibicao)
             df.to_excel(caminho, index=False)
-            messagebox.showinfo("Sucesso", f"Dados exportados com sucesso para:\n{caminho}")
+            QMessageBox.information(self, "Sucesso", f"Dados exportados com sucesso para:\n{caminho}")
+
+    @Slot()
+    def _limpar_tabela(self):
+        if not self.dados_para_exibicao: return
+        reply = QMessageBox.question(self, "Confirmar", "Limpar todos os dados da tabela?", 
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.Yes:
+            self.dados_para_exibicao.clear()
+            self._atualizar_tabela()

@@ -1,112 +1,124 @@
 # app/views/honorarios_gui.py
-import customtkinter as ctk
-from tkinter import filedialog, messagebox
 import os
-from datetime import datetime
+import datetime
 import threading
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QFrame, QLabel, QTextEdit, 
+                               QFileDialog, QMessageBox)
+from PySide6.QtCore import Slot, Signal, QObject
 
 from app.logic.honorarios_processor import HonorariosProcessor
-from app.widgets.custom_button import StandardButton
-from app.widgets.custom_labels import TitleLabel, InfoLabel, ValueLabel
-from app.widgets.custom_frames import StandardFrame
+from app.widgets.styled_widgets import StyledButton
 
+class WorkerSignals(QObject):
+    finished = Signal(dict)
+    log_message = Signal(str)
 
-class HonorariosGUI(ctk.CTkFrame):
-    """
-    View para gerar relatórios de honorários a partir de um arquivo Excel.
-    """
-
+class HonorariosGUI(QWidget):
     def __init__(self, master=None):
-        super().__init__(master, fg_color="transparent")
-        self.pack(fill="both", expand=True, padx=10, pady=10)
-
-        self.caminho_arquivo_excel = ctk.StringVar(value="")
-        self.nome_arquivo_display = ctk.StringVar(value="Nenhum arquivo selecionado.")
-        self.pasta_destino_pdf = ctk.StringVar(value=os.path.abspath(
-            os.path.join(os.path.dirname(__file__), '../../data/honorarios_reports')))
-        os.makedirs(self.pasta_destino_pdf.get(), exist_ok=True)
-
-        self.honorarios_processor = HonorariosProcessor(logger_callback=self._log_mensagem)
+        super().__init__(master)
+        
+        self.caminho_arquivo_excel = ""
+        self.pasta_destino_pdf = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../data/honorarios_reports'))
+        os.makedirs(self.pasta_destino_pdf, exist_ok=True)
+        
+        self.signals = WorkerSignals()
+        self.signals.finished.connect(self._on_processing_finished)
+        self.signals.log_message.connect(self._append_log_message)
+        
+        self.processor = HonorariosProcessor(logger_callback=self._log_mensagem_thread_safe)
+        
         self._criar_interface()
 
     def _criar_interface(self):
-        """Cria e organiza todos os widgets da interface gráfica."""
-        # Frame de Configurações
-        settings_frame = StandardFrame(self)
-        settings_frame.pack(pady=10, padx=10, fill="x")
+        main_layout = QVBoxLayout(self)
 
-        TitleLabel(settings_frame, text="Configuração do Relatório de Honorários").pack(pady=10)
+        settings_frame = QFrame()
+        settings_frame.setObjectName("container")
+        settings_frame.setStyleSheet("#container { border: 1px solid #dcdcdc; border-radius: 5px; }")
+        settings_layout = QVBoxLayout(settings_frame)
+        
+        self.lbl_nome_arquivo = QLabel("Nenhum arquivo selecionado.")
+        btn_sel_arquivo = StyledButton("Selecionar Arquivo Excel", "primary")
+        
+        self.lbl_pasta_destino = QLabel(f"<b>Pasta de Destino:</b> {self.pasta_destino_pdf}")
+        self.lbl_pasta_destino.setWordWrap(True)
+        btn_sel_pasta = StyledButton("Selecionar Pasta de Destino", "primary")
+        
+        settings_layout.addWidget(QLabel("<b>Configuração do Relatório de Honorários</b>"))
+        settings_layout.addWidget(QLabel("Arquivo Excel de Honorários:"))
+        settings_layout.addWidget(self.lbl_nome_arquivo)
+        settings_layout.addWidget(btn_sel_arquivo)
+        settings_layout.addWidget(self.lbl_pasta_destino)
+        settings_layout.addWidget(btn_sel_pasta)
+        
+        self.btn_gerar_relatorio = StyledButton("📈 Gerar Relatório de Honorários", "processing")
+        
+        self.caixa_log = QTextEdit()
+        self.caixa_log.setReadOnly(True)
 
-        InfoLabel(settings_frame, text="📊 Arquivo Excel de Honorários:").pack(pady=(10, 0))
-        ValueLabel(settings_frame, textvariable=self.nome_arquivo_display, text_color=("blue", "cyan")).pack()
-        StandardButton(settings_frame, text="Selecionar Arquivo Excel", command=self._selecionar_arquivo_excel).pack(
-            pady=(5, 15))
+        main_layout.addWidget(settings_frame)
+        main_layout.addWidget(self.btn_gerar_relatorio)
+        main_layout.addWidget(QLabel("<b>Log de Processamento:</b>"))
+        main_layout.addWidget(self.caixa_log, 1)
 
-        InfoLabel(settings_frame, text="📁 Pasta de Destino para o Relatório PDF:").pack(pady=(10, 0))
-        ValueLabel(settings_frame, textvariable=self.pasta_destino_pdf, wraplength=800).pack()
-        StandardButton(settings_frame, text="Selecionar Pasta de Destino", command=self._selecionar_pasta_destino).pack(
-            pady=(5, 15))
+        # Conexões
+        btn_sel_arquivo.clicked.connect(self._selecionar_arquivo_excel)
+        btn_sel_pasta.clicked.connect(self._selecionar_pasta_destino)
+        self.btn_gerar_relatorio.clicked.connect(self._iniciar_geracao_relatorio)
 
-        # Botão de Ação Principal
-        self.btn_gerar_relatorio = StandardButton(self, text="📈 Gerar Relatório de Honorários",
-                                                  command=self._iniciar_geracao_relatorio_threaded,
-                                                  variant="processing")
-        self.btn_gerar_relatorio.pack(pady=20, ipady=5)
-
-        # Log de Eventos
-        log_frame = StandardFrame(self)
-        log_frame.pack(pady=10, padx=10, fill="both", expand=True)
-        TitleLabel(log_frame, text="Log de Processamento").pack(pady=5)
-        self.caixa_log = ctk.CTkTextbox(log_frame, state='disabled', wrap='word')
-        self.caixa_log.pack(fill="both", expand=True, padx=10, pady=10)
-
+    @Slot()
     def _selecionar_arquivo_excel(self):
-        arquivo = filedialog.askopenfilename(title="Selecione o arquivo Excel de honorários",
-                                             filetypes=[("Arquivos Excel", "*.xlsx *.xls")])
-        if arquivo:
-            self.caminho_arquivo_excel.set(arquivo)
-            self.nome_arquivo_display.set(os.path.basename(arquivo))
-            self._log_mensagem(f"Arquivo selecionado: {os.path.basename(arquivo)}")
+        caminho, _ = QFileDialog.getOpenFileName(self, "Selecione o arquivo de honorários", "", "Arquivos Excel (*.xlsx *.xls)")
+        if caminho:
+            self.caminho_arquivo_excel = caminho
+            self.lbl_nome_arquivo.setText(os.path.basename(caminho))
+            self._log_mensagem_thread_safe(f"Arquivo selecionado: {os.path.basename(caminho)}")
 
+    @Slot()
     def _selecionar_pasta_destino(self):
-        pasta = filedialog.askdirectory(initialdir=self.pasta_destino_pdf.get(),
-                                        title="Selecione a pasta para salvar o relatório PDF")
+        pasta = QFileDialog.getExistingDirectory(self, "Selecione a pasta de destino", self.pasta_destino_pdf)
         if pasta:
-            self.pasta_destino_pdf.set(pasta)
-            self._log_mensagem(f"Pasta de destino selecionada: {pasta}")
-            os.makedirs(self.pasta_destino_pdf.get(), exist_ok=True)
-
-    def _iniciar_geracao_relatorio_threaded(self):
-        if not self.caminho_arquivo_excel.get():
-            messagebox.showwarning("Aviso", "Por favor, selecione um arquivo Excel primeiro.")
+            self.pasta_destino_pdf = pasta
+            self.lbl_pasta_destino.setText(f"<b>Pasta de Destino:</b> {pasta}")
+            os.makedirs(pasta, exist_ok=True)
+            
+    @Slot()
+    def _iniciar_geracao_relatorio(self):
+        if not self.caminho_arquivo_excel:
+            QMessageBox.warning(self, "Aviso", "Por favor, selecione um arquivo Excel primeiro.")
             return
-
-        self.btn_gerar_relatorio.configure(state="disabled", text="Gerando Relatório...")
-        self._log_mensagem("Iniciando a geração do relatório...")
-
+            
+        self.btn_gerar_relatorio.setEnabled(False)
+        self.btn_gerar_relatorio.setText("Gerando Relatório...")
+        self._log_mensagem_thread_safe("Iniciando a geração do relatório...")
+        
         threading.Thread(target=self._executar_geracao_relatorio, daemon=True).start()
 
     def _executar_geracao_relatorio(self):
         try:
-            resultado_msg = self.honorarios_processor.processar_honorarios_e_gerar_pdf(
-                self.caminho_arquivo_excel.get(),
-                self.pasta_destino_pdf.get()
+            resultado_msg = self.processor.processar_honorarios_e_gerar_pdf(
+                self.caminho_arquivo_excel, self.pasta_destino_pdf
             )
-            self.after(0, lambda: messagebox.showinfo("Sucesso", resultado_msg))
-            self._log_mensagem(f"✅ {resultado_msg}")
+            self.signals.finished.emit({"status": "sucesso", "mensagem": resultado_msg})
         except Exception as e:
-            self._log_mensagem(f"❌ Erro: {e}")
-            self.after(0, lambda: messagebox.showerror("Erro no Processamento", str(e)))
-        finally:
-            self.after(0, lambda: self.btn_gerar_relatorio.configure(state="normal",
-                                                                     text="📈 Gerar Relatório de Honorários"))
+            self.signals.finished.emit({"status": "erro", "mensagem": str(e)})
 
-    def _log_mensagem(self, mensagem: str):
-        if self.winfo_exists():
-            self.after(0, self._append_log_message, mensagem)
+    @Slot(dict)
+    def _on_processing_finished(self, resultado):
+        if resultado["status"] == "sucesso":
+            QMessageBox.information(self, "Sucesso", resultado["mensagem"])
+            self._log_mensagem_thread_safe(f"✅ {resultado['mensagem']}")
+        else:
+            QMessageBox.critical(self, "Erro", resultado["mensagem"])
+            self._log_mensagem_thread_safe(f"❌ Erro: {resultado['mensagem']}")
+            
+        self.btn_gerar_relatorio.setEnabled(True)
+        self.btn_gerar_relatorio.setText("📈 Gerar Relatório de Honorários")
 
-    def _append_log_message(self, mensagem: str):
-        self.caixa_log.configure(state='normal')
-        self.caixa_log.insert(ctk.END, f"{datetime.now().strftime('%H:%M:%S')} - {mensagem}\n")
-        self.caixa_log.see(ctk.END)
-        self.caixa_log.configure(state='disabled')
+    def _log_mensagem_thread_safe(self, mensagem):
+        self.signals.log_message.emit(mensagem)
+
+    @Slot(str)
+    def _append_log_message(self, mensagem):
+        timestamp = datetime.datetime.now().strftime('%H:%M:%S')
+        self.caixa_log.append(f"[{timestamp}] {mensagem}")

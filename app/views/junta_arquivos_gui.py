@@ -1,165 +1,166 @@
 # app/views/junta_arquivos_gui.py
-import customtkinter as ctk
-from tkinter import filedialog, messagebox
 import os
-from datetime import datetime
+import datetime
 import threading
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFrame, QTreeWidget, 
+                               QHeaderView, QTreeWidgetItem, QFileDialog, QMessageBox, QTextEdit, QLabel)
+from PySide6.QtCore import Slot, Signal, QObject
 
-# Importa a lógica do processador e os widgets padronizados
 from app.logic.junta_arquivos_processor import ExcelProcessor
-from app.widgets.custom_button import StandardButton
-from app.widgets.custom_labels import TitleLabel, InfoLabel, ValueLabel
-from app.widgets.custom_frames import StandardFrame
+from app.widgets.styled_widgets import StyledButton
 
+# Classe para emitir sinais de uma thread secundária para a GUI principal
+class WorkerSignals(QObject):
+    log_message = Signal(str)
+    finished = Signal(dict)
 
-class JuntaArquivosGUI(ctk.CTkFrame):
-    """
-    View para a consolidação de múltiplos arquivos Excel, permitindo
-    a seleção individual de arquivos.
-    """
-
-    def __init__(self, master=None):
-        super().__init__(master, fg_color="transparent")
-        self.pack(fill="both", expand=True, padx=10, pady=10)
+class JuntaArquivosGUI(QWidget):
+    def __init__(self):
+        super().__init__()
 
         self.arquivos_selecionados = []
-        self.pasta_destino_saida = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), '../../data/excel_processed'))
+        self.pasta_destino_saida = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../data/excel_processed'))
         os.makedirs(self.pasta_destino_saida, exist_ok=True)
-
-        self.excel_processor = ExcelProcessor(logger_callback=self._log_mensagem)
+        self.processor = ExcelProcessor(logger_callback=self._log_mensagem_thread_safe)
+        
+        self.signals = WorkerSignals()
+        self.signals.log_message.connect(self._append_log_message)
+        self.signals.finished.connect(self._on_processing_finished)
+        
         self._criar_interface()
 
     def _criar_interface(self):
-        """Cria e organiza os widgets da interface gráfica."""
-        # --- Frame Principal para Arquivos ---
-        files_main_frame = StandardFrame(self)
-        files_main_frame.pack(pady=10, padx=10, fill="both", expand=True)
+        main_layout = QVBoxLayout(self)
 
-        StandardButton(files_main_frame, text="➕ Adicionar Arquivo(s) Excel",
-                       command=self._adicionar_arquivo,
-                       variant="success").pack(pady=15)
+        # --- Frame Superior com botões e lista ---
+        top_frame = QFrame()
+        top_layout = QVBoxLayout(top_frame)
+        top_frame.setStyleSheet("QFrame { border: 1px solid #dcdcdc; border-radius: 5px; }")
+        
+        actions_layout = QHBoxLayout()
+        self.btn_adicionar = StyledButton("➕ Adicionar Arquivo(s)", variant="success")
+        self.btn_remover = StyledButton("🗑️ Remover Selecionado", variant="danger")
+        actions_layout.addWidget(self.btn_adicionar)
+        actions_layout.addWidget(self.btn_remover)
+        actions_layout.addStretch()
 
-        self.frame_lista_arquivos = ctk.CTkScrollableFrame(files_main_frame,
-                                                           label_text="Arquivos na Fila para Processamento")
-        self.frame_lista_arquivos.pack(fill="both", expand=True, padx=10, pady=10)
-        self._atualizar_lista_arquivos_gui()
+        self.tree = QTreeWidget()
+        self.tree.setHeaderLabels(["Arquivos na Fila para Processamento"])
+        self.tree.header().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
 
-        # --- Frame para Configurações de Saída ---
-        output_frame = StandardFrame(self)
-        output_frame.pack(pady=10, padx=10, fill="x")
+        top_layout.addLayout(actions_layout)
+        top_layout.addWidget(self.tree)
+        
+        # --- Frame Inferior com configurações ---
+        bottom_frame = QFrame()
+        bottom_layout = QVBoxLayout(bottom_frame)
+        bottom_frame.setStyleSheet("QFrame { border: 1px solid #dcdcdc; border-radius: 5px; }")
 
-        InfoLabel(output_frame, text="📂 Pasta de Destino para Consolidados e Logs:").pack(pady=(10, 0))
-        self.lbl_pasta_destino = ValueLabel(output_frame, text=self.pasta_destino_saida, wraplength=900)
-        self.lbl_pasta_destino.pack(padx=10)
-        StandardButton(output_frame, text="Selecionar Pasta de Destino", command=self._selecionar_pasta_destino).pack(
-            pady=10)
+        self.lbl_pasta_destino = QLabel(f"Pasta de Destino: {self.pasta_destino_saida}")
+        self.lbl_pasta_destino.setWordWrap(True)
+        btn_selecionar_pasta = StyledButton("Selecionar Pasta", variant="primary")
+        
+        bottom_layout.addWidget(self.lbl_pasta_destino)
+        bottom_layout.addWidget(btn_selecionar_pasta)
 
-        # --- Botão de Processamento e Log ---
-        self.btn_processar = StandardButton(self, text="🚀 Processar Arquivos da Fila",
-                                            command=self._iniciar_processamento_threaded,
-                                            variant="processing")
-        self.btn_processar.pack(pady=20, ipady=5)
+        # --- Botão de processamento e Log ---
+        self.btn_processar = StyledButton("🚀 Processar Arquivos", variant="processing")
+        self.caixa_log = QTextEdit()
+        self.caixa_log.setReadOnly(True)
 
-        self.caixa_log = ctk.CTkTextbox(self, height=150, state='disabled', wrap='word')
-        self.caixa_log.pack(fill="both", expand=True, padx=10, pady=5)
+        main_layout.addWidget(top_frame)
+        main_layout.addWidget(bottom_frame)
+        main_layout.addWidget(self.btn_processar)
+        main_layout.addWidget(QLabel("Log de Processamento:"))
+        main_layout.addWidget(self.caixa_log)
 
+        # --- Conexões (Sinais e Slots) ---
+        self.btn_adicionar.clicked.connect(self._adicionar_arquivo)
+        self.btn_remover.clicked.connect(self._remover_arquivo_selecionado)
+        btn_selecionar_pasta.clicked.connect(self._selecionar_pasta_destino)
+        self.btn_processar.clicked.connect(self._iniciar_processamento_threaded)
+
+    @Slot()
     def _adicionar_arquivo(self):
-        """Abre o diálogo para selecionar um ou mais arquivos Excel."""
-        arquivos = filedialog.askopenfilenames(
-            title="Selecione um ou mais arquivos Excel",
-            filetypes=[("Arquivos Excel", "*.xlsx *.xls")]
-        )
+        arquivos, _ = QFileDialog.getOpenFileNames(self, "Selecione um ou mais arquivos", "", "Arquivos Excel (*.xlsx *.xls)")
         if not arquivos: return
-
+        
         novos_adicionados = 0
-        for arquivo_path in arquivos:
-            if any(item['caminho'] == arquivo_path for item in self.arquivos_selecionados):
-                self.log(f"⚠️ Aviso: Arquivo '{os.path.basename(arquivo_path)}' já está na lista.")
-                continue
-
-            arquivo_info = {
-                'caminho': arquivo_path,
-                'nome_amigavel': os.path.basename(arquivo_path)
-            }
-            self.arquivos_selecionados.append(arquivo_info)
-            novos_adicionados += 1
-
+        for path in arquivos:
+            if not any(d['caminho'] == path for d in self.arquivos_selecionados):
+                self.arquivos_selecionados.append({'caminho': path, 'nome_amigavel': os.path.basename(path)})
+                novos_adicionados += 1
+        
         if novos_adicionados > 0:
-            self.log(f"📁 {novos_adicionados} arquivo(s) adicionado(s) à fila.")
-            self._atualizar_lista_arquivos_gui()
+            self._log_mensagem_thread_safe(f"📁 {novos_adicionados} arquivo(s) adicionado(s).")
+            self._atualizar_tabela()
 
-    def _remover_arquivo(self, index_para_remover):
-        """Remove um arquivo da lista de selecionados."""
-        if 0 <= index_para_remover < len(self.arquivos_selecionados):
-            nome_removido = self.arquivos_selecionados[index_para_remover]['nome_amigavel']
-            del self.arquivos_selecionados[index_para_remover]
-            self.log(f"🗑️ Arquivo removido da fila: {nome_removido}")
-            self._atualizar_lista_arquivos_gui()
-
-    def _atualizar_lista_arquivos_gui(self):
-        """Limpa e recria a lista de arquivos na interface."""
-        for widget in self.frame_lista_arquivos.winfo_children():
-            widget.destroy()
-
-        if not self.arquivos_selecionados:
-            InfoLabel(self.frame_lista_arquivos, text="Nenhum arquivo na fila.").pack(pady=20)
+    @Slot()
+    def _remover_arquivo_selecionado(self):
+        selected_item = self.tree.currentItem()
+        if not selected_item:
+            QMessageBox.warning(self, "Aviso", "Selecione um arquivo para remover.")
             return
 
-        for i, arquivo_info in enumerate(self.arquivos_selecionados):
-            item_frame = ctk.CTkFrame(self.frame_lista_arquivos, fg_color="transparent")
-            item_frame.pack(fill="x", pady=2, padx=5)
+        nome_para_remover = selected_item.text(0)
+        self.arquivos_selecionados = [d for d in self.arquivos_selecionados if d['nome_amigavel'] != nome_para_remover]
+        self._log_mensagem_thread_safe(f"🗑️ Arquivo removido: {nome_para_remover}")
+        self._atualizar_tabela()
 
-            label = InfoLabel(item_frame, text=f"📄 {arquivo_info['nome_amigavel']}")
-            label.pack(side="left", padx=5, expand=True, anchor="w")
+    def _atualizar_tabela(self):
+        self.tree.clear()
+        for item_data in self.arquivos_selecionados:
+            tree_item = QTreeWidgetItem([item_data['nome_amigavel']])
+            self.tree.addTopLevelItem(tree_item)
 
-            remove_button = StandardButton(item_frame, text="Remover", command=lambda idx=i: self._remover_arquivo(idx),
-                                           variant="danger", width=80, height=25)
-            remove_button.pack(side="right", padx=5)
-
+    @Slot()
     def _selecionar_pasta_destino(self):
-        pasta = filedialog.askdirectory(initialdir=self.pasta_destino_saida,
-                                        title="Selecione a pasta para salvar os arquivos de saída")
+        pasta = QFileDialog.getExistingDirectory(self, "Selecione a pasta de saída", self.pasta_destino_saida)
         if pasta:
             self.pasta_destino_saida = pasta
-            self.lbl_pasta_destino.configure(text=pasta)
-            self.log(f"Pasta de destino selecionada: {pasta}")
-            os.makedirs(self.pasta_destino_saida, exist_ok=True)
+            self.lbl_pasta_destino.setText(f"Pasta de Destino: {self.pasta_destino_saida}")
 
+    @Slot()
     def _iniciar_processamento_threaded(self):
         if not self.arquivos_selecionados:
-            messagebox.showwarning("Nenhum Arquivo", "Por favor, adicione pelo menos um arquivo Excel para processar.")
-            return
-
-        self.btn_processar.configure(state="disabled", text="Processando...")
-        self.log("Iniciando o processamento... Isso pode levar um momento.")
-
-        lista_de_caminhos = [item['caminho'] for item in self.arquivos_selecionados]
-
-        process_thread = threading.Thread(target=self._executar_processamento, args=(lista_de_caminhos,))
-        process_thread.daemon = True
-        process_thread.start()
+            QMessageBox.warning(self, "Aviso", "Adicione pelo menos um arquivo para processar."); return
+            
+        self.btn_processar.setEnabled(False)
+        self.btn_processar.setText("Processando...")
+        
+        lista_caminhos = [d['caminho'] for d in self.arquivos_selecionados]
+        
+        # Executa o processamento em uma thread separada
+        thread = threading.Thread(target=self._executar_processamento, args=(lista_caminhos,), daemon=True)
+        thread.start()
 
     def _executar_processamento(self, lista_de_arquivos):
         try:
-            df_consolidado = self.excel_processor.processar_arquivos_excel(lista_de_arquivos)
-            self.excel_processor.salvar_consolidado_excel(self.pasta_destino_saida, df_consolidado)
-            self.excel_processor.gerar_resumo_e_pdf_log(self.pasta_destino_saida, df_consolidado)
-
-            self.after(0, lambda: messagebox.showinfo("Sucesso", "Processamento concluído com sucesso!"))
-            self.log("🎉 Processamento de arquivos Excel finalizado!")
+            df_consolidado = self.processor.processar_arquivos_excel(lista_de_arquivos)
+            self.processor.salvar_consolidado_excel(self.pasta_destino_saida, df_consolidado)
+            self.processor.gerar_resumo_e_pdf_log(self.pasta_destino_saida, df_consolidado)
+            resultado = {"status": "sucesso", "mensagem": "Processamento concluído com sucesso!"}
         except Exception as e:
-            self.log(f"❌ Erro: {e}")
-            self.after(0, lambda: messagebox.showerror("Erro no Processamento", f"Ocorreu um erro: {e}"))
-        finally:
-            self.after(0, lambda: self.btn_processar.configure(state="normal", text="🚀 Processar Arquivos da Fila"))
+            resultado = {"status": "erro", "mensagem": str(e)}
+        
+        self.signals.finished.emit(resultado)
 
-    def _log_mensagem(self, mensagem: str):
-        if self.winfo_exists():
-            self.after(0, self._append_log_message, mensagem)
+    @Slot(dict)
+    def _on_processing_finished(self, resultado):
+        if resultado["status"] == "sucesso":
+            QMessageBox.information(self, "Sucesso", resultado["mensagem"])
+            self._log_mensagem_thread_safe("🎉 Processamento finalizado!")
+        else:
+            QMessageBox.critical(self, "Erro", f"Ocorreu um erro: {resultado['mensagem']}")
+            self._log_mensagem_thread_safe(f"❌ Erro: {resultado['mensagem']}")
+            
+        self.btn_processar.setEnabled(True)
+        self.btn_processar.setText("🚀 Processar Arquivos")
+    
+    def _log_mensagem_thread_safe(self, mensagem):
+        self.signals.log_message.emit(mensagem)
 
-    def _append_log_message(self, mensagem: str):
-        self.caixa_log.configure(state='normal')
-        self.caixa_log.insert(ctk.END, f"{datetime.now().strftime('%H:%M:%S')} - {mensagem}\n")
-        self.caixa_log.see(ctk.END)
-        self.caixa_log.configure(state='disabled')
+    @Slot(str)
+    def _append_log_message(self, mensagem):
+        timestamp = datetime.datetime.now().strftime('%H:%M:%S')
+        self.caixa_log.append(f"[{timestamp}] {mensagem}")
