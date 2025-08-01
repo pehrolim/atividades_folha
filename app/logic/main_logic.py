@@ -10,6 +10,7 @@ from app.views.junta_arquivos_gui import JuntaArquivosGUI
 from app.views.honorarios_gui import HonorariosGUI
 from app.views.home_gui import HomeGUI
 from app.views.aco_demais_cat_gui import AcoDemaisCatGUI
+from app.views.implantacoes_gui import ImplantacoesGUI
 
 
 class MainLogic:
@@ -67,3 +68,6 @@ class MainLogic:
     
     def show_demais_cat(self):
         self._show_frame(AcoDemaisCatGUI)
+    
+    def show_implantacoes(self):
+        self._show_frame(ImplantacoesGUI)

@@ -73,4 +73,24 @@ class DataManager:
         """
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         return f"{prefix}_{timestamp}.{extension}"
+    @staticmethod
+    def converter_para_numero(valor):
+        if valor is None:
+            return None
+
+        valor_str = str(valor).strip()
+
+        if not valor_str:
+            return None
+        valor_str = valor_str.lower().replace('r$', '').strip()
+
+        try:
+            if ',' in valor_str:
+                valor_limpo = valor_str.replace('.', '').replace(',', '.')
+                return float(valor_limpo)
+            else:
+                return float(valor_str)
+                
+        except (ValueError, TypeError):
+            return None
 

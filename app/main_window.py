@@ -12,7 +12,8 @@ from app.views.calc_aco_gui import CalcAcoGUI
 from app.views.junta_arquivos_gui import JuntaArquivosGUI
 from app.views.honorarios_gui import HonorariosGUI
 from app.views.acordo_prestadores_gui import AcordoPrestadoresGUI
-from app.views.acordo_prof_aposentados_gui import AcordoProfAposentadosGUI # <-- NOVA IMPORTAÇÃO
+from app.views.acordo_prof_aposentados_gui import AcordoProfAposentadosGUI
+from app.views.implantacoes_gui import ImplantacoesGUI # <-- **IMPORTAÇÃO CORRETA**
 from app.widgets.styled_widgets import StyledButton
 
 class MainWindow(QMainWindow):
@@ -34,9 +35,10 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(menu_frame)
         main_layout.addWidget(self.pages_widget)
 
-        # --- Mapeamento de botões para as classes de tela ---
+        # Mapeamento de botões para as classes de tela
         self.view_map = {
             "Home": HomeGUI,
+            "Implantações": ImplantacoesGUI, # <-- **NOVA TELA ADICIONADA**
             "ACO Militar": AcoMilitarGUI,
             "ACO (GPC-PENAL)": AcoDemaisCatGUI,
             "Monitor de Arquivos": FileMonitorGUI,
@@ -48,9 +50,13 @@ class MainWindow(QMainWindow):
             "Acordo Prof Aposentados": AcordoProfAposentadosGUI,
         }
 
-        # --- Criar e adicionar os botões e telas ---
+        # --- CORREÇÃO APLICADA AQUI ---
+        # Criar e adicionar os botões e as instâncias das telas
         for text, view_class in self.view_map.items():
-            view_instance = view_class()
+            # Esta linha cria a INSTÂNCIA (o objeto) da classe da view
+            view_instance = view_class() 
+            
+            # Adiciona a INSTÂNCIA ao QStackedWidget
             self.pages_widget.addWidget(view_instance)
             
             button = StyledButton(text, variant="primary")
@@ -63,4 +69,5 @@ class MainWindow(QMainWindow):
         btn_quit.clicked.connect(self.close)
         menu_layout.addWidget(btn_quit)
 
-        self.pages_widget.setCurrentWidget(self.pages_widget.widget(0))
+        if self.pages_widget.count() > 0:
+            self.pages_widget.setCurrentIndex(0)
